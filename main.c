@@ -35,7 +35,8 @@ sfsistat fromckmilter_envrcpt(SMFICTX *ctx, char **argv) {
 
 sfsistat fromckmilter_header(SMFICTX *ctx, char *headerf, char *headerv) {
 	if(!strcasecmp(headerf, "From")) {
-		// checking domain name
+		// Checking the domain name: getting the domain name
+
 		char *at = strchr(headerv, '@');
 		if(!at)
 			return SMFIS_REJECT;	// No "@" in "From:" value
@@ -43,6 +44,22 @@ sfsistat fromckmilter_header(SMFICTX *ctx, char *headerf, char *headerv) {
 		char *domainname = &at[1];
 		if(!domainname[0])		// Empty after "@" in "From:" value
 			return SMFIS_REJECT;
+
+		// Checking the domain name: removing ">" on the end, if required
+
+		char *domainname_end = strchr(domainname, '>');
+
+		if(domainname_end != NULL) {
+			size_t domainname_len = domainname_end - domainname;
+			char *domainname_tr = alloca(domainname_len + 1);
+
+			memcpy(domainname_tr, domainname, domainname_len);
+			domainname_tr[domainname_len]=0;
+
+			domainname = domainname_tr;
+		}
+
+		// Checking the domain name
 
 		struct addrinfo *res;
 
