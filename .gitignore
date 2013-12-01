@@ -1,0 +1,11 @@
+
+# objects:
+*.o
+
+# linked:
+from-check-milter
+from-check-milter-debug
+
+# other:
+build
+
