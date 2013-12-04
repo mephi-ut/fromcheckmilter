@@ -12,6 +12,7 @@
 #include <sysexits.h>
 #include <unistd.h>
 #include <libmilter/mfapi.h>
+#include <syslog.h>
 
 // === Code ===
 
@@ -38,33 +39,55 @@ sfsistat fromckmilter_header(SMFICTX *ctx, char *headerf, char *headerv) {
 		// Checking the domain name: getting the domain name
 
 		char *at = strchr(headerv, '@');
-		if(!at)
+		if(!at) {
+			syslog(LOG_NOTICE, "Invalid \"from\" value: no \"@\" in the string: \"%s\"\n", headerv);
 			return SMFIS_REJECT;	// No "@" in "From:" value
+		}
 
 		char *domainname = &at[1];
-		if(!domainname[0])		// Empty after "@" in "From:" value
+		if(!domainname[0]) {		// Empty after "@" in "From:" value
+			syslog(LOG_NOTICE, "Invalid \"from\" value: emptry after the \"@\": \"%s\"\n", headerv);
 			return SMFIS_REJECT;
+		}
 
-		// Checking the domain name: removing ">" on the end, if required
+/*
+		// Checking the domain name: searching the end of domain name
 
-		char *domainname_end = strchr(domainname, '>');
+		char *domainname_end0 = strchr(domainname, '>');
+		char *domainname_end1 = strchr(domainname, ' ');
+
+		char *domainname_end = 	(domainname_end0 == NULL) ? domainnname_end1 :
+					(domainname_end1 == NULL) ? domainnname_end0 :
+					MIN(domainname_end0, domainname_end1);
+
+		// Checking the domain name: coping the domain name and terminating with '\0'
 
 		if(domainname_end != NULL) {
 			size_t domainname_len = domainname_end - domainname;
 			char *domainname_tr = alloca(domainname_len + 1);
 
 			memcpy(domainname_tr, domainname, domainname_len);
-			domainname_tr[domainname_len]=0;
+			domainname_tr[domainname_len] = 0;
 
 			domainname = domainname_tr;
 		}
+*/
+
+		// Checking the domain name: Cutting the domain name
+
+		char *strtok_saveptr = NULL;
+		char *domainname_cut = strtok_r(domainname, " \t)(<>@,;:\"/[]?=", &strtok_saveptr);
+		if(domainname_cut != NULL)
+			domainname = domainname_cut;
 
 		// Checking the domain name
 
 		struct addrinfo *res;
 
-		if(getaddrinfo(domainname, NULL, NULL, &res))
-			return SMFIS_REJECT;	// Non existant domain name in "From:" value
+		if(getaddrinfo(domainname, NULL, NULL, &res)) {
+			syslog(LOG_NOTICE, "Unable to resolve domain name \"%s\" from \"from\" value: \"%s\". Answering TEMPFAIL.\n", domainname, headerv);
+			return SMFIS_TEMPFAIL;	// Non existant domain name in "From:" value
+		}
 	}
 	return SMFIS_CONTINUE;
 }
@@ -78,6 +101,8 @@ sfsistat fromckmilter_body(SMFICTX *ctx, unsigned char *bodyp, size_t bodylen) {
 }
 
 sfsistat fromckmilter_eom(SMFICTX *ctx) {
+	smfi_addheader(ctx, "X-FromChk-Milter", "passed");
+
 	return SMFIS_CONTINUE;
 }
 
@@ -190,6 +215,9 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr, "smfi_register failed\n");
 		exit(EX_UNAVAILABLE);
 	}
-	return smfi_main();
+	openlog(NULL, LOG_PID, LOG_MAIL);
+	int ret = smfi_main();
+	closelog();
+	return ret;
 }
 
