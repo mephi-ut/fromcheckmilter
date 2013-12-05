@@ -27,38 +27,6 @@ sfsistat fromckmilter_helo(SMFICTX *ctx, char *helohost) {
 }
 
 sfsistat fromckmilter_envfrom(SMFICTX *ctx, char **argv) {
-	char *sender_mail = argv[0];
-
-	// Checking the domain name: getting the domain name
-
-	char *at = strchr(sender_mail, '@');
-	if(!at) {
-		syslog(LOG_NOTICE, "Invalid \"from\" value: no \"@\" in the string: \"%s\"\n", sender_mail);
-		return SMFIS_REJECT;	// No "@" in "From:" value
-	}
-
-	char *domainname = &at[1];
-	if(!domainname[0]) {		// Empty after "@" in "From:" value
-		syslog(LOG_NOTICE, "Invalid \"from\" value: emptry after the \"@\": \"%s\"\n", sender_mail);
-		return SMFIS_REJECT;
-	}
-
-	// Checking the domain name: Cutting the domain name
-
-	char *strtok_saveptr = NULL;
-	char *domainname_cut = strtok_r(domainname, " \t)(<>@,;:\"/[]?=", &strtok_saveptr);
-	if(domainname_cut != NULL)
-		domainname = domainname_cut;
-
-	// Checking the domain name
-
-	struct addrinfo *res;
-
-	if(getaddrinfo(domainname, NULL, NULL, &res)) {
-		syslog(LOG_NOTICE, "Unable to resolve domain name \"%s\" from \"from\" value: \"%s\". Answering TEMPFAIL.\n", domainname, sender_mail);
-		return SMFIS_TEMPFAIL;	// Non existant domain name in "From:" value
-	}
-
 	return SMFIS_CONTINUE;
 }
 
@@ -67,6 +35,37 @@ sfsistat fromckmilter_envrcpt(SMFICTX *ctx, char **argv) {
 }
 
 sfsistat fromckmilter_header(SMFICTX *ctx, char *headerf, char *headerv) {
+	if(!strcasecmp(headerf, "From")) {
+		// Checking the domain name: getting the domain name
+
+		char *at = strchr(headerv, '@');
+		if(!at) {
+			syslog(LOG_NOTICE, "Invalid \"from\" value: no \"@\" in the string: \"%s\"\n", headerv);
+			return SMFIS_REJECT;        // No "@" in "From:" value
+		}
+
+		char *domainname = &at[1];
+		if(!domainname[0]) {                // Empty after "@" in "From:" value
+			syslog(LOG_NOTICE, "Invalid \"from\" value: emptry after the \"@\": \"%s\"\n", headerv);
+			return SMFIS_REJECT;
+		}
+
+		// Checking the domain name: Cutting the domain name
+
+		char *strtok_saveptr = NULL;
+		char *domainname_cut = strtok_r(domainname, " \t)(<>@,;:\"/[]?=", &strtok_saveptr);
+		if(domainname_cut != NULL)
+			domainname = domainname_cut;
+
+		// Checking the domain name
+
+		struct addrinfo *res;
+
+		if(getaddrinfo(domainname, NULL, NULL, &res)) {
+			syslog(LOG_NOTICE, "Unable to resolve domain name \"%s\" from \"from\" value: \"%s\". Answering TEMPFAIL.\n", domainname, headerv);
+			return SMFIS_TEMPFAIL;        // Non existant domain name in "From:" value
+		}
+	}
 	return SMFIS_CONTINUE;
 }
 
