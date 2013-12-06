@@ -4,6 +4,9 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/nameser.h>
+#include <resolv.h>
 #include <netdb.h>
 #include <errno.h>
 #include <stdio.h>
@@ -59,9 +62,19 @@ sfsistat fromckmilter_header(SMFICTX *ctx, char *headerf, char *headerv) {
 
 		// Checking the domain name
 
-		struct addrinfo *res;
+#ifdef METHOD_GETADDRINFO
+		// Deprecated method: Resolves A-record, but MX is required
 
-		if(getaddrinfo(domainname, NULL, NULL, &res)) {
+		struct addrinfo *res;
+		if(getaddrinfo(domainname, NULL, NULL, &res))
+#else
+		// Good method.
+		unsigned char answer[BUFSIZ];
+		int answer_len = res_search(domainname, C_IN, T_MX, answer, BUFSIZ);
+
+		if(answer_len == -1)
+#endif
+		{
 			syslog(LOG_NOTICE, "Unable to resolve domain name \"%s\" from \"from\" value: \"%s\". Answering TEMPFAIL.\n", domainname, headerv);
 			return SMFIS_TEMPFAIL;        // Non existant domain name in "From:" value
 		}
@@ -137,6 +150,11 @@ int main(int argc, char *argv[]) {
 		fromckmilter_data,		// DATA command
 		fromckmilter_negotiate		// Once, at the start of each SMTP connection
 	};
+
+	if (res_init() != 0) {
+		fprintf(stderr, "Error while res_init()\n");
+		exit(EX_SOFTWARE);
+	}
 
 	char setconn = 0;
 	int c;

@@ -1,5 +1,5 @@
 
-LDFLAGS = -lmilter -L/usr/lib/libmilter/
+LDFLAGS = -lmilter -lresolv -L/usr/lib/libmilter/
 INCFLAGS = 
 CFLAGS += -pipe -Wall -pedantic -O2 -fstack-protector-all
 DEBUGCFLAGS = -pipe -Wall -pedantic -Werror -ggdb -Wno-error=unused-variable -fstack-protector-all
