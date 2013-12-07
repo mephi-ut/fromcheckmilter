@@ -72,10 +72,18 @@ sfsistat fromckmilter_header(SMFICTX *ctx, char *headerf, char *headerv) {
 		unsigned char answer[BUFSIZ];
 		int answer_len = res_search(domainname, C_IN, T_MX, answer, BUFSIZ);
 
+		if(answer_len == -1) {
+			syslog(LOG_NOTICE, "%s: Unable to resolve MX-record of domain name \"%s\". Unusual for mail server.\n", smfi_getsymval(ctx, "i"), domainname);
+			answer_len = res_search(domainname, C_IN, T_A, answer, BUFSIZ);
+		}
+
+		if(answer_len == -1)
+			answer_len = res_search(domainname, C_IN, T_AAAA, answer, BUFSIZ);
+
 		if(answer_len == -1)
 #endif
 		{
-			syslog(LOG_NOTICE, "Unable to resolve domain name \"%s\" from \"from\" value: \"%s\". Answering TEMPFAIL.\n", domainname, headerv);
+			syslog(LOG_NOTICE, "%s: Unable to resolve domain name \"%s\" from \"from\" value: \"%s\". Answering TEMPFAIL.\n", smfi_getsymval(ctx, "i"), domainname, headerv);
 			return SMFIS_TEMPFAIL;        // Non existant domain name in "From:" value
 		}
 	}
