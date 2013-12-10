@@ -17,6 +17,15 @@
 #include <libmilter/mfapi.h>
 #include <syslog.h>
 
+// === Global definitions ===
+
+enum flags {
+	FLAG_EMPTY		= 0x00,
+	FLAG_CHECK_MAILFROM	= 0x01,
+};
+typedef enum flags flags_t;
+flags_t flags = FLAG_EMPTY;
+
 // === Code ===
 
 extern sfsistat fromckmilter_cleanup(SMFICTX *, bool);
@@ -30,6 +39,20 @@ sfsistat fromckmilter_helo(SMFICTX *ctx, char *helohost) {
 }
 
 sfsistat fromckmilter_envfrom(SMFICTX *ctx, char **argv) {
+	if(flags & FLAG_CHECK_MAILFROM) {
+		if(argv[0] == NULL) {
+			syslog(LOG_NOTICE, "fromckmilter_envfrom(): argv[0]==NULL. Sending TEMPFAIL.\n");
+			return SMFIS_TEMPFAIL;
+		}
+		if(*argv[0] == 0) {
+			syslog(LOG_NOTICE, "fromckmilter_envfrom(): *argv[0]==0. Sending TEMPFAIL.\n");
+			return SMFIS_TEMPFAIL;
+		}
+
+		char *mailfrom = strdup(argv[0]);
+		smfi_setpriv(ctx, mailfrom);
+	}
+
 	return SMFIS_CONTINUE;
 }
 
@@ -38,54 +61,108 @@ sfsistat fromckmilter_envrcpt(SMFICTX *ctx, char **argv) {
 }
 
 sfsistat fromckmilter_header(SMFICTX *ctx, char *headerf, char *headerv) {
+
 	if(!strcasecmp(headerf, "From")) {
-		// Checking the domain name: getting the domain name
+		char *domainname_mailfrom=NULL, *domainname_from;
 
-		char *at = strchr(headerv, '@');
-		if(!at) {
-			syslog(LOG_NOTICE, "Invalid \"from\" value: no \"@\" in the string: \"%s\"\n", headerv);
-			return SMFIS_REJECT;        // No "@" in "From:" value
+		// "MAIL FROM"
+		if(flags & FLAG_CHECK_MAILFROM) {
+
+			// Getting MAIL FROM value
+
+			char *mailfrom = smfi_getpriv(ctx);
+
+			if(mailfrom == NULL) {
+				syslog(LOG_NOTICE, "fromckmilter_header(): mailfrom==NULL. Sending TEMPFAIL.\n");
+				return SMFIS_TEMPFAIL;
+			}
+			if(*mailfrom == 0) {
+				syslog(LOG_NOTICE, "fromckmilter_header(): *mailfrom==0. Sending TEMPFAIL.\n");
+				return SMFIS_TEMPFAIL;
+			}
+
+			// Getting domain name from MAIL FROM value
+
+			char *at = strchr(mailfrom, '@');
+			if(!at) {
+				syslog(LOG_NOTICE, "%s:Invalid \"MAIL FROM\" value: no \"@\" in the string: \"%s\"\n", smfi_getsymval(ctx, "i"), headerv);
+				return SMFIS_REJECT;        // No "@" in "From:" value
+			}
+
+			domainname_mailfrom = &at[1];
+			if(!domainname_mailfrom[0]) {                // Empty after "@" in "From:" value
+				syslog(LOG_NOTICE, "%s: Invalid \"MAIL FROM\" value: empty after the \"@\": \"%s\"\n", smfi_getsymval(ctx, "i"), mailfrom);
+				return SMFIS_REJECT;
+			}
+
+			// Cutting the domain name of MAIL FROM value
+
+			char *strtok_saveptr = NULL;
+			char *domainname_cut = strtok_r(domainname_mailfrom, " \t)(<>@,;:\"/[]?=", &strtok_saveptr);
+			if(domainname_cut != NULL)
+				domainname_mailfrom = domainname_cut;
 		}
 
-		char *domainname = &at[1];
-		if(!domainname[0]) {                // Empty after "@" in "From:" value
-			syslog(LOG_NOTICE, "Invalid \"from\" value: emptry after the \"@\": \"%s\"\n", headerv);
-			return SMFIS_REJECT;
-		}
+		// "From"
 
-		// Checking the domain name: Cutting the domain name
+		{
 
-		char *strtok_saveptr = NULL;
-		char *domainname_cut = strtok_r(domainname, " \t)(<>@,;:\"/[]?=", &strtok_saveptr);
-		if(domainname_cut != NULL)
-			domainname = domainname_cut;
+			// Checking the domain name: getting the domain name
 
-		// Checking the domain name
+			char *at = strchr(headerv, '@');
+			if(!at) {
+				syslog(LOG_NOTICE, "%s: Invalid \"from\" value: no \"@\" in the string: \"%s\"\n", smfi_getsymval(ctx, "i"), headerv);
+				return SMFIS_REJECT;        // No "@" in "From:" value
+			}
+
+			domainname_from = &at[1];
+			if(!domainname_from[0]) {                // Empty after "@" in "From:" value
+				syslog(LOG_NOTICE, "%s: Invalid \"from\" value: empty after the \"@\": \"%s\"\n", smfi_getsymval(ctx, "i"), headerv);
+				return SMFIS_REJECT;
+			}
+
+			// Checking the domain name: Cutting the domain name
+
+			char *strtok_saveptr = NULL;
+			char *domainname_cut = strtok_r(domainname_from, " \t)(<>@,;:\"/[]?=", &strtok_saveptr);
+			if(domainname_cut != NULL)
+				domainname_from = domainname_cut;
+
+			// Checking the domain name
 
 #ifdef METHOD_GETADDRINFO
-		// Deprecated method: Resolves A-record, but MX is required
+			// Deprecated method: Resolves A-record, but MX is required
 
-		struct addrinfo *res;
-		if(getaddrinfo(domainname, NULL, NULL, &res))
+			struct addrinfo *res;
+			if(getaddrinfo(domainname_from, NULL, NULL, &res))
 #else
-		// Good method.
-		unsigned char answer[BUFSIZ];
-		int answer_len = res_search(domainname, C_IN, T_MX, answer, BUFSIZ);
+			// Good method.
+			unsigned char answer[BUFSIZ];
+			int answer_len = res_search(domainname_from, C_IN, T_MX, answer, BUFSIZ);
 
-		if(answer_len == -1) {
-			syslog(LOG_NOTICE, "%s: Unable to resolve MX-record of domain name \"%s\". Unusual for mail server.\n", smfi_getsymval(ctx, "i"), domainname);
-			answer_len = res_search(domainname, C_IN, T_A, answer, BUFSIZ);
-		}
+			if(answer_len == -1) {
+				syslog(LOG_NOTICE, "%s: Unable to resolve MX-record of domain name \"%s\". Unusual for mail server.\n", smfi_getsymval(ctx, "i"), domainname_from);
+				answer_len = res_search(domainname_from, C_IN, T_A, answer, BUFSIZ);
+			}
 
-		if(answer_len == -1)
-			answer_len = res_search(domainname, C_IN, T_AAAA, answer, BUFSIZ);
+			if(answer_len == -1)
+				answer_len = res_search(domainname_from, C_IN, T_AAAA, answer, BUFSIZ);
 
-		if(answer_len == -1)
+			if(answer_len == -1)
 #endif
-		{
-			syslog(LOG_NOTICE, "%s: Unable to resolve domain name \"%s\" from \"from\" value: \"%s\". Answering TEMPFAIL.\n", smfi_getsymval(ctx, "i"), domainname, headerv);
-			return SMFIS_TEMPFAIL;        // Non existant domain name in "From:" value
+			{
+				syslog(LOG_NOTICE, "%s: Unable to resolve domain name \"%s\" from \"from\" value: \"%s\". Answering TEMPFAIL.\n", smfi_getsymval(ctx, "i"), domainname_from, headerv);
+				return SMFIS_TEMPFAIL;        // Non existant domain name in "From:" value
+			}
+
 		}
+
+		if(flags & FLAG_CHECK_MAILFROM)
+			if(strcmp(domainname_from, domainname_mailfrom)) {
+				syslog(LOG_NOTICE, "%s: Unable to resolve domain name \"%s\" from \"from\" value: \"%s\". Answering TEMPFAIL.\n", smfi_getsymval(ctx, "i"), domainname_from, headerv);
+				return SMFIS_REJECT;
+			}
+
 	}
 	return SMFIS_CONTINUE;
 }
@@ -109,6 +186,12 @@ sfsistat fromckmilter_abort(SMFICTX *ctx) {
 }
 
 sfsistat fromckmilter_close(SMFICTX *ctx) {
+	char *mailfrom = smfi_getpriv(ctx);
+	if(mailfrom != NULL) {
+		free(mailfrom);
+		smfi_setpriv(ctx, NULL);
+	}
+
 	return SMFIS_CONTINUE;
 }
 
@@ -166,7 +249,7 @@ int main(int argc, char *argv[]) {
 
 	char setconn = 0;
 	int c;
-	const char *args = "p:t:h";
+	const char *args = "p:t:hm";
 	extern char *optarg;
 	// Process command line options
 	while ((c = getopt(argc, argv, args)) != -1) {
@@ -202,6 +285,9 @@ int main(int argc, char *argv[]) {
 						"smfi_settimeout failed\n");
 					exit(EX_SOFTWARE);
 				}
+				break;
+			case 'm':
+				flags |= FLAG_CHECK_MAILFROM;
 				break;
 			case 'h':
 			default:

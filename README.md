@@ -14,3 +14,13 @@ Any questions?
  - IRC: ircs://irc.campus.mephi.ru/#mephi,xai,xaionaro
  - email: <dyokunev@ut.mephi.ru> 0x8E30679C
 
+
+options
+-------
+
+ - -p /path/to/unix/socket - path to unix socket to communicate with MTA.
+ - -t timeout - timeout in seconds of communicating with MTA.
+ - -m - check "MAIL FROM" value and require that domains of "MAIL FROM" and
+"From" should be equal.
+ - -h - help
+
