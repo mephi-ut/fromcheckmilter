@@ -85,7 +85,7 @@ sfsistat fromckmilter_header(SMFICTX *ctx, char *headerf, char *headerv) {
 
 			char *at = strchr(mailfrom, '@');
 			if(!at) {
-				syslog(LOG_NOTICE, "%s:Invalid \"MAIL FROM\" value: no \"@\" in the string: \"%s\"\n", smfi_getsymval(ctx, "i"), headerv);
+				syslog(LOG_NOTICE, "%s: Invalid \"MAIL FROM\" value: no \"@\" in the string: \"%s\"\n", smfi_getsymval(ctx, "i"), headerv);
 				return SMFIS_REJECT;        // No "@" in "From:" value
 			}
 
