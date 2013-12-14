@@ -1,6 +1,8 @@
 
 // === Includes ===
 
+#define _GNU_SOURCE
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
@@ -85,13 +87,15 @@ sfsistat fromckmilter_header(SMFICTX *ctx, char *headerf, char *headerv) {
 
 			char *at = strchr(mailfrom, '@');
 			if(!at) {
-				syslog(LOG_NOTICE, "%s: Invalid \"MAIL FROM\" value: no \"@\" in the string: \"%s\"\n", smfi_getsymval(ctx, "i"), mailfrom);
+				syslog(LOG_NOTICE, "%s: Invalid \"MAIL FROM\" value: no \"@\" in the string: \"%s\"\n",
+					smfi_getsymval(ctx, "i"), mailfrom);
 				return SMFIS_REJECT;        // No "@" in "From:" value
 			}
 
 			domainname_mailfrom = &at[1];
 			if(!domainname_mailfrom[0]) {                // Empty after "@" in "From:" value
-				syslog(LOG_NOTICE, "%s: Invalid \"MAIL FROM\" value: empty after the \"@\": \"%s\"\n", smfi_getsymval(ctx, "i"), mailfrom);
+				syslog(LOG_NOTICE, "%s: Invalid \"MAIL FROM\" value: empty after the \"@\": \"%s\"\n",
+					smfi_getsymval(ctx, "i"), mailfrom);
 				return SMFIS_REJECT;
 			}
 
@@ -111,13 +115,15 @@ sfsistat fromckmilter_header(SMFICTX *ctx, char *headerf, char *headerv) {
 
 			char *at = strchr(headerv, '@');
 			if(!at) {
-				syslog(LOG_NOTICE, "%s: Invalid \"from\" value: no \"@\" in the string: \"%s\"\n", smfi_getsymval(ctx, "i"), headerv);
+				syslog(LOG_NOTICE, "%s: Invalid \"from\" value: no \"@\" in the string: \"%s\"\n",
+					smfi_getsymval(ctx, "i"), headerv);
 				return SMFIS_REJECT;        // No "@" in "From:" value
 			}
 
 			domainname_from = &at[1];
 			if(!domainname_from[0]) {                // Empty after "@" in "From:" value
-				syslog(LOG_NOTICE, "%s: Invalid \"from\" value: empty after the \"@\": \"%s\"\n", smfi_getsymval(ctx, "i"), headerv);
+				syslog(LOG_NOTICE, "%s: Invalid \"from\" value: empty after the \"@\": \"%s\"\n",
+					smfi_getsymval(ctx, "i"), headerv);
 				return SMFIS_REJECT;
 			}
 
@@ -141,7 +147,8 @@ sfsistat fromckmilter_header(SMFICTX *ctx, char *headerf, char *headerv) {
 			int answer_len = res_search(domainname_from, C_IN, T_MX, answer, BUFSIZ);
 
 			if(answer_len == -1) {
-				syslog(LOG_NOTICE, "%s: Unable to resolve MX-record of domain name \"%s\". Unusual for mail server.\n", smfi_getsymval(ctx, "i"), domainname_from);
+				syslog(LOG_NOTICE, "%s: Unable to resolve MX-record of domain name \"%s\". Unusual for mail server.\n",
+					smfi_getsymval(ctx, "i"), domainname_from);
 				answer_len = res_search(domainname_from, C_IN, T_A, answer, BUFSIZ);
 			}
 
@@ -151,17 +158,31 @@ sfsistat fromckmilter_header(SMFICTX *ctx, char *headerf, char *headerv) {
 			if(answer_len == -1)
 #endif
 			{
-				syslog(LOG_NOTICE, "%s: Unable to resolve domain name \"%s\" from \"from\" value: \"%s\". Answering TEMPFAIL.\n", smfi_getsymval(ctx, "i"), domainname_from, headerv);
+				syslog(LOG_NOTICE, "%s: Unable to resolve domain name \"%s\" from \"From\" value: \"%s\". Answering TEMPFAIL.\n", 
+					smfi_getsymval(ctx, "i"), domainname_from, headerv);
 				return SMFIS_TEMPFAIL;        // Non existant domain name in "From:" value
 			}
 
 		}
 
-		if(flags & FLAG_CHECK_MAILFROM)
-			if(strcmp(domainname_from, domainname_mailfrom)) {
-				syslog(LOG_NOTICE, "%s: Unable to resolve domain name \"%s\" from \"from\" value: \"%s\". Answering TEMPFAIL.\n", smfi_getsymval(ctx, "i"), domainname_from, headerv);
+		if(flags & FLAG_CHECK_MAILFROM) {
+			char *result;
+			size_t domainname_from_len, domainname_mailfrom_len;
+
+			domainname_from_len     = strlen(domainname_from);
+			domainname_mailfrom_len = strlen(domainname_mailfrom);
+
+			if(domainname_from_len > domainname_mailfrom_len)
+				result = strcasestr(domainname_from, domainname_mailfrom);
+			else
+				result = strcasestr(domainname_mailfrom, domainname_from);
+
+			if(result == NULL) {
+				syslog(LOG_NOTICE, "%s: \"MAIL FROM\" !~ \"From\": \"%s\" !~ \"%s\". Sending REJECT.\n",
+					smfi_getsymval(ctx, "i"), domainname_mailfrom, domainname_from);
 				return SMFIS_REJECT;
 			}
+		}
 
 	}
 	return SMFIS_CONTINUE;
