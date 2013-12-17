@@ -22,17 +22,39 @@
 // === Global definitions ===
 
 enum flags {
-	FLAG_EMPTY		= 0x00,
-	FLAG_CHECK_MAILFROM	= 0x01,
+	FLAG_EMPTY			= 0x00,
+	FLAG_CHECK_MAILFROM		= 0x01,
+	FLAG_CHECK_MAILFROM_PASS	= 0x02,
 };
 typedef enum flags flags_t;
 flags_t flags = FLAG_EMPTY;
+
+enum status {
+	ST_NONE				= 0x00,
+	ST_FROMMISMATCH			= 0x01,
+};
+typedef enum status status_t;
+
+struct private {
+	char     *mailfrom;
+	status_t  status;
+};
+typedef struct private private_t;
 
 // === Code ===
 
 extern sfsistat fromckmilter_cleanup(SMFICTX *, bool);
 
 sfsistat fromckmilter_connect(SMFICTX *ctx, char *hostname, _SOCK_ADDR *hostaddr) {
+	private_t *priv = calloc(sizeof(*priv), 1);
+
+	if(priv == NULL) {
+		syslog(LOG_CRIT, "fromckmilter_connect(): Cannot allocate memory. Exit.\n");
+		exit(EX_SOFTWARE);
+	}
+
+	smfi_setpriv(ctx, priv);
+
 	return SMFIS_CONTINUE;
 }
 
@@ -42,6 +64,8 @@ sfsistat fromckmilter_helo(SMFICTX *ctx, char *helohost) {
 
 sfsistat fromckmilter_envfrom(SMFICTX *ctx, char **argv) {
 	if(flags & FLAG_CHECK_MAILFROM) {
+		private_t *priv = smfi_getpriv(ctx);
+
 		if(argv[0] == NULL) {
 			syslog(LOG_NOTICE, "fromckmilter_envfrom(): argv[0]==NULL. Sending TEMPFAIL.\n");
 			return SMFIS_TEMPFAIL;
@@ -51,14 +75,14 @@ sfsistat fromckmilter_envfrom(SMFICTX *ctx, char **argv) {
 			return SMFIS_TEMPFAIL;
 		}
 
-		char *mailfrom = strdup(argv[0]);
-		smfi_setpriv(ctx, mailfrom);
+		priv->mailfrom = strdup(argv[0]);
 	}
 
 	return SMFIS_CONTINUE;
 }
 
 sfsistat fromckmilter_envrcpt(SMFICTX *ctx, char **argv) {
+
 	return SMFIS_CONTINUE;
 }
 
@@ -66,13 +90,14 @@ sfsistat fromckmilter_header(SMFICTX *ctx, char *headerf, char *headerv) {
 
 	if(!strcasecmp(headerf, "From")) {
 		char *domainname_mailfrom=NULL, *domainname_from;
+		private_t *priv = smfi_getpriv(ctx);
 
 		// "MAIL FROM"
 		if(flags & FLAG_CHECK_MAILFROM) {
 
 			// Getting MAIL FROM value
 
-			char *mailfrom = smfi_getpriv(ctx);
+			char *mailfrom = priv->mailfrom;
 
 			if(mailfrom == NULL) {
 				syslog(LOG_NOTICE, "fromckmilter_header(): mailfrom==NULL. Sending TEMPFAIL.\n");
@@ -178,9 +203,13 @@ sfsistat fromckmilter_header(SMFICTX *ctx, char *headerf, char *headerv) {
 				result = strcasestr(domainname_mailfrom, domainname_from);
 
 			if(result == NULL) {
-				syslog(LOG_NOTICE, "%s: \"MAIL FROM\" !~ \"From\": \"%s\" !~ \"%s\". Sending REJECT.\n",
+				syslog(LOG_NOTICE, "%s: \"MAIL FROM\" !~ \"From\": \"%s\" !~ \"%s\".\n",
 					smfi_getsymval(ctx, "i"), domainname_mailfrom, domainname_from);
-				return SMFIS_REJECT;
+
+				if(flags & FLAG_CHECK_MAILFROM_PASS)
+					priv->status |= ST_FROMMISMATCH;
+				else 
+					return SMFIS_REJECT;
 			}
 		}
 
@@ -198,6 +227,13 @@ sfsistat fromckmilter_body(SMFICTX *ctx, unsigned char *bodyp, size_t bodylen) {
 
 sfsistat fromckmilter_eom(SMFICTX *ctx) {
 	smfi_addheader(ctx, "X-FromChk-Milter", "passed");
+	if(flags & FLAG_CHECK_MAILFROM_PASS) {
+		private_t *priv = smfi_getpriv(ctx);
+		if(priv->status & ST_FROMMISMATCH)
+			smfi_addheader(ctx, "X-FromChk-Milter-MailFrom", "mismatch");
+		else
+			smfi_addheader(ctx, "X-FromChk-Milter-MailFrom", "passed");
+	}
 
 	return SMFIS_CONTINUE;
 }
@@ -207,12 +243,15 @@ sfsistat fromckmilter_abort(SMFICTX *ctx) {
 }
 
 sfsistat fromckmilter_close(SMFICTX *ctx) {
-	char *mailfrom = smfi_getpriv(ctx);
-	if(mailfrom != NULL) {
-		free(mailfrom);
-		smfi_setpriv(ctx, NULL);
-	}
+	private_t *priv = smfi_getpriv(ctx);
+	if(priv == NULL)
+		return SMFIS_CONTINUE;
 
+	if(priv->mailfrom != NULL)
+		free(priv->mailfrom);
+
+	free(priv);
+	smfi_setpriv(ctx, NULL);
 	return SMFIS_CONTINUE;
 }
 
@@ -239,7 +278,7 @@ sfsistat fromckmilter_negotiate(ctx, f0, f1, f2, f3, pf0, pf1, pf2, pf3)
 }
 
 static void usage(const char *path) {
-	fprintf(stderr, "Usage: %s -p socket-addr [-t timeout]\n",
+	fprintf(stderr, "Usage: %s -p socket-addr [-t timeout] [-mM]\n",
 		path);
 }
 
@@ -270,7 +309,7 @@ int main(int argc, char *argv[]) {
 
 	char setconn = 0;
 	int c;
-	const char *args = "p:t:hm";
+	const char *args = "p:t:hMm";
 	extern char *optarg;
 	// Process command line options
 	while ((c = getopt(argc, argv, args)) != -1) {
@@ -310,6 +349,9 @@ int main(int argc, char *argv[]) {
 			case 'm':
 				flags |= FLAG_CHECK_MAILFROM;
 				break;
+			case 'M':
+				flags |= FLAG_CHECK_MAILFROM_PASS;
+				break;
 			case 'h':
 			default:
 				usage(argv[0]);
@@ -319,6 +361,10 @@ int main(int argc, char *argv[]) {
 	if (!setconn) {
 		fprintf(stderr, "%s: Missing required -p argument\n", argv[0]);
 		usage(argv[0]);
+		exit(EX_USAGE);
+	}
+	if ((flags&(FLAG_CHECK_MAILFROM_PASS|FLAG_CHECK_MAILFROM)) == FLAG_CHECK_MAILFROM_PASS) {
+		fprintf(stderr, "%s: -M can be used only in conjunction with -m\n", argv[0]);
 		exit(EX_USAGE);
 	}
 	if (smfi_register(mailfilterdesc) == MI_FAILURE) {

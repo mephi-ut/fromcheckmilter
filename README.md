@@ -24,5 +24,7 @@ options
  - -t timeout - timeout in seconds of communicating with MTA.
  - -m - check "MAIL FROM" value and require domains of "MAIL FROM" and "From"
 to be similar ("MAIL FROM" should be substring of "From" or vice versa).
+ - -M - don't reject mail with unsimilar "MAIL FROM" and "From". Just add
+header "X-FromChk-Milter-MailFrom: mismatch" instead.
  - -h - help
 
