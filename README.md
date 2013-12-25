@@ -28,3 +28,9 @@ to be similar ("MAIL FROM" should be substring of "From" or vice versa).
 header "X-FromChk-Milter-MailFrom: mismatch" instead.
  - -h - help
 
+
+example
+-------
+
+- from-check-milter[19042]: E77192FE8F9: Unable to resolve MX-record of domain name "pRYuvxQansRNx.net". Unusual for mail server.
+- from-check-milter[19042]: E77192FE8F9: Unable to resolve domain name "pRYuvxQansRNx.net" from "From" value: "=?utf-8?B?0JzQtdC00LjQsCDRgdC70YPQttCx0LA=?= <higGpDA@pRYuvxQansRNx.net". Answering TEMPFAIL.
